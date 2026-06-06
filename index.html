@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synesthesia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Geist+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #08080a; --text: #e8e4dc; --dim: #5a5650; }
+  html, body { width:100%; height:100%; background:var(--bg); color:var(--text); font-family:'Geist Mono',monospace; overflow:hidden; }
+
+  #landing {
+    position:fixed; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; z-index:100;
+    background:var(--bg); transition:opacity 0.8s ease;
+  }
+  #landing.fade { opacity:0; pointer-events:none; }
+
+  .landing-inner { display:flex; flex-direction:column; align-items:center; gap:20px; max-width:480px; width:100%; padding:0 24px; }
+
+  .wordmark { font-family:'Cormorant Garamond',serif; font-size:52px; font-weight:300; letter-spacing:0.15em; text-transform:uppercase; line-height:1; }
+  .tagline { font-family:'Cormorant Garamond',serif; font-style:italic; font-size:16px; color:var(--dim); letter-spacing:0.05em; margin-bottom:12px; }
+
+  .upload-btn {
+    width:100%; padding:16px; border:1px solid #2a2820; border-radius:8px;
+    background:transparent; color:var(--text); font-family:'Geist Mono',monospace;
+    font-size:11px; letter-spacing:0.12em; text-transform:uppercase; cursor:pointer;
+    transition:border-color 0.2s, background 0.2s; text-align:center;
+  }
+  .upload-btn:hover { border-color:#5a5650; background:rgba(255,255,255,0.03); }
+
+  .or-row { display:flex; align-items:center; gap:12px; width:100%; color:var(--dim); font-size:10px; letter-spacing:0.1em; }
+  .or-row::before, .or-row::after { content:''; flex:1; height:1px; background:#2a2820; }
+  #file-input { display:none; }
+
+  #canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  #hud {
+    position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.4s; z-index:50;
+  }
+  #hud.visible { opacity:1; }
+
+  .hbtn {
+    padding:9px 18px; border-radius:40px; border:1px solid rgba(255,255,255,0.12);
+    background:rgba(8,8,10,0.8); backdrop-filter:blur(12px); color:var(--text);
+    font-family:'Geist Mono',monospace; font-size:10px; letter-spacing:0.1em;
+    text-transform:uppercase; cursor:pointer; transition:border-color 0.2s, background 0.2s;
+  }
+  .hbtn:hover { border-color:rgba(255,255,255,0.3); background:rgba(255,255,255,0.06); }
+
+
+
+
+  #track-name {
+    font-family:'Cormorant Garamond',serif; font-style:italic; font-size:15px;
+    color:rgba(232,228,220,0.5); padding:9px 18px; border-radius:40px;
+    border:1px solid rgba(255,255,255,0.06); background:rgba(8,8,10,0.8);
+    backdrop-filter:blur(12px); max-width:240px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  #save-flash {
+    position:fixed; top:24px; left:50%; transform:translateX(-50%) translateY(-8px);
+    background:rgba(232,228,220,0.1); backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,0.1); color:var(--text);
+    font-family:'Geist Mono',monospace; font-size:10px; letter-spacing:0.1em;
+    text-transform:uppercase; padding:9px 20px; border-radius:40px;
+    opacity:0; transition:opacity 0.3s, transform 0.3s; z-index:200; pointer-events:none;
+  }
+  #save-flash.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+</style>
+</head>
+<body>
+
+<div id="landing">
+  <div class="landing-inner">
+    <div class="wordmark">Synesthesia</div>
+    <div class="tagline">music becomes painting</div>
+    <div style="display:flex;flex-direction:column;gap:12px;width:100%">
+      <button class="upload-btn" id="btn-upload">↑ Upload audio file</button>
+      <input type="file" id="file-input" accept="audio/*">
+      <div class="or-row">or</div>
+      <button class="upload-btn" id="btn-mic">◉ Use microphone</button>
+    </div>
+  </div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+  <div class="info-pill" id="section-pill">—</div>
+  <div class="info-pill" id="mode-pill">—</div>
+</div>
+
+<div id="hud">
+  <button class="hbtn" id="btn-pause">Pause</button>
+  <div id="track-name"></div>
+  <button class="hbtn" id="btn-clear">Clear</button>
+  <button class="hbtn" id="btn-save">Save painting</button>
+</div>
+
+<div id="save-flash">Painting saved</div>
+
+<script>
+
+let audioCtx, analyser, dataArray, bufferLength;
+let animFrame, paused = false, trackName = "";
+
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+resize();
+window.addEventListener("resize", resize);
+
+function setupAnalyser(source) {
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.8;
+  bufferLength = analyser.frequencyBinCount;
+  dataArray = new Uint8Array(bufferLength);
+  prevSpectrum = new Uint8Array(bufferLength);
+  source.connect(analyser);
+  analyser.connect(audioCtx.destination);
+  document.getElementById("landing").classList.add("fade");
+  setTimeout(() => {
+    document.getElementById("landing").style.display = "none";
+    document.getElementById("hud").classList.add("visible");
+  }, 800);
+  draw();
+}
+
+document.getElementById("btn-upload").onclick = () => document.getElementById("file-input").click();
+document.getElementById("file-input").onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  trackName = file.name.replace(/\.[^.]+$/, "");
+  document.getElementById("track-name").textContent = trackName;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await file.arrayBuffer();
+  const decoded = await audioCtx.decodeAudioData(buf);
+  const source = audioCtx.createBufferSource();
+  source.buffer = decoded; source.loop = false;
+  setupAnalyser(source);
+  source.start();
+  fingerprintSong(decoded);
+};
+
+document.getElementById("btn-mic").onclick = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(stream);
+    trackName = "Live input";
+    document.getElementById("track-name").textContent = trackName;
+    setupAnalyser(source);
+  } catch(e) { alert("Microphone access denied."); }
+};
+
+let songPalette = null; // null = use defaults
+
+async function fingerprintSong(audioBuffer) {
+  const offlineCtx = new OfflineAudioContext(1, audioBuffer.sampleRate * Math.min(30, audioBuffer.duration), audioBuffer.sampleRate);
+  const src = offlineCtx.createBufferSource();
+  src.buffer = audioBuffer;
+  const an = offlineCtx.createAnalyser();
+  an.fftSize = 2048;
+  src.connect(an); an.connect(offlineCtx.destination);
+  src.start();
+
+  const samples = 20;
+  const interval = Math.min(30, audioBuffer.duration) / samples;
+  const spectra = [];
+
+  for (let i = 0; i < samples; i++) {
+    const t = i * interval;
+    offlineCtx.suspend(t).then(() => {
+      const d = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(d);
+      spectra.push([...d]);
+      offlineCtx.resume();
+    });
+  }
+
+  await offlineCtx.startRendering().catch(() => {});
+
+  if (spectra.length === 0) return;
+
+  const avg = new Array(spectra[0].length).fill(0);
+  spectra.forEach(s => s.forEach((v, i) => avg[i] += v / spectra.length));
+
+  const bassEnergy  = avg.slice(0, 20).reduce((a,b) => a+b, 0) / 20;
+  const midEnergy   = avg.slice(20, 150).reduce((a,b) => a+b, 0) / 130;
+  const highEnergy  = avg.slice(150, 512).reduce((a,b) => a+b, 0) / 362;
+
+  const hueOffset = ((bassEnergy * 1.2) - (highEnergy * 0.8) + (midEnergy * 0.4)) % 360;
+
+  songPalette = { offset: hueOffset, bass: bassEnergy, mid: midEnergy, high: highEnergy };
+  console.log("Fingerprint:", songPalette);
+}
+
+const BASE_COLORS = {
+  kick:     { h: 0,   s: 90, l: 45 },
+  bass:     { h: 25,  s: 95, l: 50 },
+  lowMid:   { h: 48,  s: 95, l: 52 },
+  mid:      { h: 130, s: 80, l: 45 },
+  highMid:  { h: 185, s: 85, l: 48 },
+  presence: { h: 220, s: 85, l: 55 },
+  high:     { h: 270, s: 80, l: 58 },
+  air:      { h: 300, s: 60, l: 80 },
+};
+
+function bandColor(band, alpha, litShift = 0) {
+  const c = BASE_COLORS[band];
+  const offset = songPalette ? songPalette.offset * 0.3 : 0;
+  const h = (c.h + offset + 360) % 360;
+  return `hsla(${h},${c.s}%,${c.l + litShift}%,${alpha})`;
+}
+
+function getBands() {
+  if (!analyser) return { kick:0, bass:0, lowMid:0, mid:0, highMid:0, presence:0, high:0, air:0, energy:0, volume:0, centroid:0 };
+  analyser.getByteFrequencyData(dataArray);
+
+  const nyquist = audioCtx.sampleRate / 2;
+  const binHz = nyquist / bufferLength;
+
+  function band(lo, hi) {
+    const a = Math.floor(lo / binHz), b = Math.min(Math.floor(hi / binHz), bufferLength-1);
+    let s = 0; for (let i=a; i<=b; i++) s += dataArray[i];
+    return s / ((b-a+1) * 255);
+  }
+
+  const kick     = band(20, 80);
+  const bass     = band(80, 250);
+  const lowMid   = band(250, 500);
+  const mid      = band(500, 2000);
+  const highMid  = band(2000, 4000);
+  const presence = band(4000, 6000);
+  const high     = band(6000, 12000);
+  const air      = band(12000, 20000);
+  const energy   = kick*.25 + bass*.2 + mid*.25 + high*.15 + air*.15;
+
+  let vol = 0;
+  for (let i=0; i<bufferLength; i++) vol += dataArray[i];
+  const volume = vol / (bufferLength * 255);
+
+  let wSum = 0, sum = 0;
+  for (let i=0; i<bufferLength; i++) { wSum += dataArray[i] * i; sum += dataArray[i]; }
+  const centroid = sum > 0 ? wSum / sum / bufferLength : 0; // 0–1
+
+  return { kick, bass, lowMid, mid, highMid, presence, high, air, energy, volume, centroid };
+}
+
+const BEAT_HISTORY = 43; // ~1s at 60fps
+const energyHistory = new Array(BEAT_HISTORY).fill(0);
+const beatTimes = [];
+let lastBeatTime = 0;
+let bpm = 0;
+let beatFlash = 0; // 0–1, decays
+let onBeat = false;
+
+function detectBeat(energy) {
+  energyHistory.shift();
+  energyHistory.push(energy);
+  const avg = energyHistory.reduce((a,b) => a+b) / BEAT_HISTORY;
+  const variance = energyHistory.reduce((a,b) => a + (b-avg)**2, 0) / BEAT_HISTORY;
+  const threshold = avg + Math.sqrt(variance) * 1.4;
+
+  const now = performance.now();
+  onBeat = false;
+
+  if (energy > threshold && energy > 0.15 && (now - lastBeatTime) > 200) {
+    onBeat = true;
+    beatFlash = 1;
+    beatTimes.push(now);
+    if (beatTimes.length > 8) beatTimes.shift();
+    lastBeatTime = now;
+
+    if (beatTimes.length >= 4) {
+      const intervals = [];
+      for (let i=1; i<beatTimes.length; i++) intervals.push(beatTimes[i] - beatTimes[i-1]);
+      const avgInterval = intervals.reduce((a,b) => a+b) / intervals.length;
+      bpm = Math.round(60000 / avgInterval);
+    }
+  }
+
+  beatFlash *= 0.85;
+  return onBeat;
+}
+
+let prevSpectrum = null;
+let flux = 0;
+let onOnset = false;
+
+function detectOnset() {
+  if (!prevSpectrum) return false;
+  let f = 0;
+  for (let i=0; i<bufferLength; i++) {
+    const diff = dataArray[i] - prevSpectrum[i];
+    if (diff > 0) f += diff;
+  }
+  flux = f / bufferLength;
+  onOnset = flux > 8;
+  prevSpectrum.set(dataArray);
+  return onOnset;
+}
+
+const SECTION_WINDOW = 300; // ~5s of frames
+const sectionHistory = [];
+let currentSection = "intro";
+let sectionAge = 0; // frames since section changed
+let prevSection = "";
+
+function analyzeSection(energy) {
+  sectionHistory.push(energy);
+  if (sectionHistory.length > SECTION_WINDOW) sectionHistory.shift();
+  sectionAge++;
+
+  if (sectionHistory.length < 60) return "intro";
+
+  const recent  = sectionHistory.slice(-60).reduce((a,b) => a+b) / 60;
+  const longAvg = sectionHistory.reduce((a,b) => a+b) / sectionHistory.length;
+  const ratio   = recent / (longAvg + 0.001);
+
+  let section;
+  if (sectionHistory.length < 180)       section = "intro";
+  else if (ratio > 1.35)                  section = "chorus";
+  else if (ratio > 1.05)                  section = "verse";
+  else if (ratio < 0.55)                  section = "bridge";
+  else                                    section = "verse";
+
+  if (section !== currentSection && sectionAge > 120) {
+    prevSection    = currentSection;
+    currentSection = section;
+    sectionAge = 0;
+    document.getElementById("section-pill").textContent = section.toUpperCase();
+  }
+
+  return currentSection;
+}
+
+
+let paintMode = 0;
+let modeLocked = false;
+
+function selectMode(section, energy, centroid) {
+  if (modeLocked) return;
+  let mode;
+  if (section === "chorus" && energy > 0.3)      mode = 0; // splatter
+  else if (section === "bridge" || energy < 0.15) mode = 1; // flow
+  else if (centroid > 0.6)                        mode = 2; // crystal
+  else                                            mode = 3; // ink
+  if (mode !== paintMode) {
+    paintMode = mode;
+    const names = ["Splatter","Flow","Crystal","Ink"];
+  }
+}
+
+const AGENTS = 120;
+const bandNames = ["kick","bass","lowMid","mid","highMid","presence","high","air"];
+const agents = Array.from({ length: AGENTS }, () => ({
+  x: Math.random() * window.innerWidth,
+  y: Math.random() * window.innerHeight,
+  vx: (Math.random()-.5)*2,
+  vy: (Math.random()-.5)*2,
+  band: Math.floor(Math.random()*8),
+  size: 2 + Math.random()*5,
+  angle: Math.random()*Math.PI*2,
+  spin: (Math.random()-.5)*0.08,
+}));
+
+let time = 0;
+
+function draw() {
+  if (paused) { animFrame = requestAnimationFrame(draw); return; }
+  time++;
+
+  const bands = getBands();
+  const { kick, bass, lowMid, mid, highMid, presence, high, air, energy, volume, centroid } = bands;
+  const bandVals = [kick, bass, lowMid, mid, highMid, presence, high, air];
+
+  detectBeat(energy);
+  detectOnset();
+  const section = analyzeSection(energy);
+  selectMode(section, energy, centroid);
+
+  const W = canvas.width, H = canvas.height;
+
+
+  if (kick > 0.12) {
+    const count = Math.floor(kick * 20 * (onBeat ? 2.5 : 1));
+    for (let i=0; i<count; i++) {
+      const cx=Math.random()*W, cy=Math.random()*H;
+      const r = (onBeat ? 6 : 3) + kick*30*Math.random();
+      const alpha = 0.5 + Math.random()*0.5;
+      ctx.save(); ctx.globalAlpha = alpha;
+      ctx.fillStyle = bandColor("kick",1,Math.random()*20-10);
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      const arms = onBeat ? 6+Math.floor(Math.random()*6) : 2+Math.floor(Math.random()*4);
+      for (let a=0; a<arms; a++) {
+        const angle=Math.random()*Math.PI*2, len=r*(1.5+Math.random()*5);
+        const dropR=r*(0.08+Math.random()*0.4);
+        const tx=cx+Math.cos(angle)*len, ty=cy+Math.sin(angle)*len;
+        ctx.globalAlpha=alpha*0.45;
+        ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(tx,ty);
+        ctx.lineWidth=dropR*0.7; ctx.strokeStyle=bandColor("kick",1); ctx.stroke();
+        ctx.globalAlpha=alpha*0.85;
+        ctx.beginPath(); ctx.arc(tx,ty,dropR,0,Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  if (bass > 0.08) {
+    const count = Math.floor(bass*15);
+    for (let i=0; i<count; i++) {
+      const x=Math.random()*W, y=Math.random()*H;
+      const len=50+bass*300*Math.random(), angle=Math.random()*Math.PI*2;
+      const w=2+bass*18*Math.random(), alpha=0.35+bass*0.6;
+      ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+      const g=ctx.createLinearGradient(-len/2,0,len/2,0);
+      g.addColorStop(0,bandColor("bass",0)); g.addColorStop(0.5,bandColor("bass",alpha)); g.addColorStop(1,bandColor("bass",0));
+      ctx.beginPath(); ctx.moveTo(-len/2,0);
+      ctx.quadraticCurveTo((Math.random()-.5)*len*.8,(Math.random()-.5)*w*5,len/2,(Math.random()-.5)*w*2);
+      ctx.lineWidth=w; ctx.strokeStyle=g; ctx.lineCap="round"; ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (lowMid > 0.07) {
+    const count = Math.floor(lowMid*9);
+    for (let i=0; i<count; i++) {
+      const x=Math.random()*W, y=Math.random()*H, r=8+lowMid*100*Math.random();
+      const alpha=0.15+lowMid*0.5;
+      const g=ctx.createRadialGradient(x,y,0,x,y,r);
+      g.addColorStop(0,bandColor("lowMid",alpha,15)); g.addColorStop(1,bandColor("lowMid",0));
+      ctx.save(); ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore();
+    }
+  }
+
+  if (mid > 0.07) {
+    const count = Math.floor(mid*10);
+    for (let i=0; i<count; i++) {
+      const x=Math.random()*W, y=Math.random()*H, len=25+mid*160*Math.random();
+      const angle=Math.random()*Math.PI*2, w=1+mid*9*Math.random(), alpha=0.3+mid*0.55;
+      ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+      ctx.beginPath(); ctx.moveTo(-len/2,0);
+      ctx.bezierCurveTo(-len/4,(Math.random()-.5)*w*8,len/4,(Math.random()-.5)*w*8,len/2,(Math.random()-.5)*w*3);
+      ctx.lineWidth=w; ctx.strokeStyle=bandColor("mid",alpha); ctx.lineCap="round"; ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (highMid > 0.05) {
+    const count = Math.floor(highMid*16);
+    for (let i=0; i<count; i++) {
+      const cx=Math.random()*W, cy=Math.random()*H, r=1.5+highMid*15*Math.random();
+      ctx.save(); ctx.globalAlpha=0.45+Math.random()*0.5;
+      ctx.fillStyle=bandColor("highMid",1,Math.random()*15);
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill(); ctx.restore();
+    }
+  }
+
+  if (presence > 0.04) {
+    const count = Math.floor(presence*22);
+    for (let i=0; i<count; i++) {
+      const cx=Math.random()*W, cy=Math.random()*H, r=0.8+presence*8*Math.random();
+      const alpha=0.35+Math.random()*0.5;
+      ctx.save(); ctx.globalAlpha=alpha;
+      ctx.fillStyle=bandColor("presence",1);
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+      if (presence > 0.1) {
+        const arms=2+Math.floor(Math.random()*3);
+        for (let a=0; a<arms; a++) {
+          const ang=Math.random()*Math.PI*2, len=r*(2+Math.random()*4);
+          ctx.globalAlpha=alpha*0.3;
+          ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(ang)*len,cy+Math.sin(ang)*len);
+          ctx.lineWidth=0.5; ctx.strokeStyle=bandColor("presence",1); ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+  }
+
+  if (high > 0.04) {
+    const count = Math.floor(high*18);
+    for (let i=0; i<count; i++) {
+      const x=Math.random()*W, y=Math.random()*H, len=15+high*110*Math.random();
+      const angle=Math.random()*Math.PI*2, w=0.4+high*3.5*Math.random();
+      ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+      ctx.beginPath(); ctx.moveTo(-len/2,0); ctx.lineTo(len/2,0);
+      ctx.lineWidth=w; ctx.strokeStyle=bandColor("high",0.35+high*0.55); ctx.lineCap="round"; ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (air > 0.03) {
+    const count = Math.floor(air*35);
+    for (let i=0; i<count; i++) {
+      const x=Math.random()*W, y=Math.random()*H, r=0.4+air*3.5*Math.random();
+      ctx.save(); ctx.globalAlpha=0.25+Math.random()*0.5;
+      ctx.fillStyle=bandColor("air",1);
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore();
+    }
+  }
+
+
+  if (paintMode === 0) {
+    if (onOnset && flux > 12) {
+      const count = Math.floor(flux * 2);
+      for (let i=0; i<count; i++) {
+        const cx=Math.random()*W, cy=Math.random()*H;
+        const r=2+flux*Math.random()*3, alpha=0.6+Math.random()*0.4;
+        const band=bandNames[Math.floor(Math.random()*8)];
+        ctx.save(); ctx.globalAlpha=alpha;
+        ctx.fillStyle=bandColor(band,1,Math.random()*20-10);
+        ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+
+  if (paintMode === 1) {
+    const flowAngle = centroid * Math.PI * 4;
+    agents.slice(0,40).forEach(agent => {
+      const bv = bandVals[agent.band];
+      if (bv < 0.04) return;
+      agent.vx += Math.cos(flowAngle + Math.sin(agent.y*0.005+time*0.008)*1.5) * bv * 0.5;
+      agent.vy += Math.sin(flowAngle + Math.cos(agent.x*0.005+time*0.008)*1.5) * bv * 0.5;
+      agent.vx *= 0.94; agent.vy *= 0.94;
+      agent.x = (agent.x + agent.vx + W) % W;
+      agent.y = (agent.y + agent.vy + H) % H;
+      const size = agent.size*(0.4+bv*2.5);
+      ctx.save();
+      ctx.globalAlpha=0.55+bv*0.35;
+      ctx.fillStyle=bandColor(bandNames[agent.band],1);
+      ctx.beginPath(); ctx.arc(agent.x,agent.y,size,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=0.25+bv*0.25;
+      ctx.beginPath(); ctx.moveTo(agent.x,agent.y);
+      ctx.lineTo(agent.x-agent.vx*5,agent.y-agent.vy*5);
+      ctx.lineWidth=size*0.6; ctx.strokeStyle=bandColor(bandNames[agent.band],1);
+      ctx.lineCap="round"; ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  if (paintMode === 2) {
+    if (onOnset || high > 0.12) {
+      const count = Math.floor((high+highMid)*8);
+      for (let i=0; i<count; i++) {
+        const cx=Math.random()*W, cy=Math.random()*H;
+        const r=4+high*60*Math.random(), sides=3+Math.floor(Math.random()*5);
+        const rot=Math.random()*Math.PI*2, alpha=0.3+high*0.5;
+        const band=Math.random()<0.5?"high":"highMid";
+        ctx.save(); ctx.globalAlpha=alpha;
+        ctx.strokeStyle=bandColor(band,1,10);
+        ctx.lineWidth=0.5+high*2;
+        ctx.beginPath();
+        for (let s=0; s<=sides; s++) {
+          const a=rot+(s/sides)*Math.PI*2;
+          s===0 ? ctx.moveTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r) : ctx.lineTo(cx+Math.cos(a)*r,cy+Math.sin(a)*r);
+        }
+        ctx.closePath(); ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  if (paintMode === 3) {
+    if (bass > 0.1 || mid > 0.1) {
+      const count = Math.floor((bass+mid)*12);
+      for (let i=0; i<count; i++) {
+        const x=Math.random()*W, y=Math.random()*H;
+        const len=80+energy*400*Math.random();
+        const angle=centroid*Math.PI*2+Math.random()*0.8-0.4;
+        const w=2+energy*16*Math.random(), alpha=0.25+energy*0.6;
+        const band=Math.random()<0.5?"mid":"bass";
+        ctx.save(); ctx.translate(x,y); ctx.rotate(angle);
+        ctx.beginPath(); ctx.moveTo(-len/2,0);
+        ctx.bezierCurveTo(-len/4,(Math.random()-.5)*w*12,len/4,(Math.random()-.5)*w*12,len/2,(Math.random()-.5)*w*4);
+        ctx.lineWidth=w; ctx.strokeStyle=bandColor(band,alpha); ctx.lineCap="round"; ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  agents.forEach(agent => {
+    const bName=bandNames[agent.band], bv=bandVals[agent.band];
+    if (bv < 0.05) return;
+    const na=agent.angle+Math.sin(time*0.009+agent.x*0.004)*2+Math.cos(time*0.006+agent.y*0.004)*2;
+    agent.vx+=Math.cos(na)*bv*0.28; agent.vy+=Math.sin(na)*bv*0.28;
+    agent.angle+=agent.spin*(1+bv*3);
+    agent.vx*=0.93; agent.vy*=0.93;
+    agent.x=(agent.x+agent.vx+W)%W; agent.y=(agent.y+agent.vy+H)%H;
+    const size=agent.size*(0.5+bv*2.8);
+    ctx.save();
+    ctx.globalAlpha=0.65+bv*0.3;
+    ctx.fillStyle=bandColor(bName,1,Math.random()*12-6);
+    ctx.beginPath(); ctx.arc(agent.x,agent.y,size,0,Math.PI*2); ctx.fill();
+    if (bv>0.14) {
+      ctx.globalAlpha=0.35+bv*0.25;
+      ctx.beginPath(); ctx.moveTo(agent.x,agent.y);
+      ctx.lineTo(agent.x-agent.vx*4,agent.y-agent.vy*4);
+      ctx.lineWidth=size*0.65; ctx.strokeStyle=bandColor(bName,1); ctx.lineCap="round"; ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  if (beatFlash > 0.05) {
+    const cx=W/2, cy=H/2, r=beatFlash*Math.max(W,H)*0.9;
+    const g=ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+    g.addColorStop(0,`hsla(${BASE_COLORS.kick.h},85%,55%,${beatFlash*0.05})`);
+    g.addColorStop(0.4,`hsla(${BASE_COLORS.mid.h},80%,45%,${beatFlash*0.025})`);
+    g.addColorStop(1,`hsla(0,0%,0%,0)`);
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  }
+
+  if (energy > 0.05) {
+    const cy = centroid * H;
+    const g = ctx.createLinearGradient(0, cy-3, 0, cy+3);
+    g.addColorStop(0,"transparent");
+    g.addColorStop(0.5,`rgba(232,228,220,${energy*0.025})`);
+    g.addColorStop(1,"transparent");
+    ctx.fillStyle=g; ctx.fillRect(0,cy-3,W,6);
+  }
+
+  animFrame = requestAnimationFrame(draw);
+}
+
+document.getElementById("btn-pause").onclick = function() {
+  paused = !paused; this.textContent = paused ? "Resume" : "Pause";
+  if (audioCtx) paused ? audioCtx.suspend() : audioCtx.resume();
+};
+
+document.getElementById("btn-clear").onclick = () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#08080a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+};
+
+document.getElementById("btn-save").onclick = () => {
+  const a = document.createElement("a");
+  a.download = (trackName||"synesthesia")+"-painting.png";
+  a.href = canvas.toDataURL("image/png"); a.click();
+  const f = document.getElementById("save-flash");
+  f.classList.add("show"); setTimeout(() => f.classList.remove("show"), 2000);
+};
+
+let hudTimer;
+document.addEventListener("mousemove", () => {
+  document.getElementById("hud").classList.add("visible");
+  clearTimeout(hudTimer);
+  hudTimer = setTimeout(() => { if (!paused) document.getElementById("hud").classList.remove("visible"); }, 3000);
+});
+</script>
+</body>
+</html>
