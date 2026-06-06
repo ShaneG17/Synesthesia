@@ -66,19 +66,3 @@ Four modes auto-switch based on song section and energy:
 
 The painting accumulates permanently — nothing fades. Every session produces a unique piece.
 
----
-
-## Tech
-
-Pure HTML, CSS, and JavaScript. No libraries, no frameworks, no build step. Just open `index.html` in Chrome.
-
-- **Web Audio API** — FFT analysis, microphone input, file decoding
-- **OfflineAudioContext** — frequency fingerprinting without real-time playback
-- **Canvas 2D API** — all painting, particle physics, and rendering
-- **No external dependencies**
-
----
-
-## Open sourcing
-
-No API keys, no secrets, nothing to hide. Safe to push to GitHub as-is.
