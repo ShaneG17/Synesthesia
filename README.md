@@ -12,22 +12,22 @@ Synesthesia analyzes audio in real time and translates it into a generative pain
 
 ## How to get started
 
-###Beat detection
+Beat detection:
 Tracks audio energy. Beats trigger stronger splatters and a pulse from the center. BPM is calculated from time between beats.
 
-###Onset detection
+Onset detection:
 Detects sudden sounds like drum hits and note attacks, triggering extra paint chaos.
 
-###Balancing
+Balancing:
 Scans the first 30 seconds of a song to measure its bass/mid/treble balance, then assigns it a unique color palette.
 
-###Painting modes
+Painting modes:
 Auto-switch based on energy and song section:
 
-Splatter: chorus, high energy, maximum chaos
-Flow: quiet sections, smooth particle streams
-Crystal: high frequencies, geometric shapes
-Ink: expressive brushstrokes
+- Splatter: chorus, high energy, maximum chaos
+- Flow: quiet sections, smooth particle streams
+- Crystal: high frequencies, geometric shapes
+- Ink: expressive brushstrokes
 
 ---
 
